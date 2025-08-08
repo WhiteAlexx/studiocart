@@ -113,7 +113,6 @@ async def get_caption(product):
 
 async def cart_caption(carts, cart):
 
-
     cart_price = round(cart.quantity * cart.product.final_price, 2)
     if cart_price % 1 == 0:
         cart_price_txt = f"{cart_price:.0f}"

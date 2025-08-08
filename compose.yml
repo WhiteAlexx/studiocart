@@ -1,0 +1,73 @@
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+  db:
+    image: postgres:13-alpine
+    environment:
+      - POSTGRES_DB=bot
+      - POSTGRES_USER=bot
+      - POSTGRES_PASSWORD=bot
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  dbbrowser:
+    image: adminer
+    container_name: adminer
+    ports:
+      - 8080:8080
+    depends_on:
+      - db
+  
+  celery_worker:
+    build: ./studiobot
+    volumes:
+      - ./studiobot:/usr/src/studiobot
+      - ./receipts:/usr/src/receipts
+      # - receipts_data:/usr/src/receipts
+    command: celery -A tasks.celery_tasks worker --loglevel=info --pool=solo
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER=redis://redis:6379/1
+    #   - ADMIN_IDS=${ADMIN_IDS}
+      - BOT_TOKEN=7683870154:AAFVtIjPdNf_HQEnAuxgZJEdUd4Hy_WPzok
+      - DB_HOST=db
+      - DB_PORT=5432
+      - DB_NAME=bot
+      - DB_USER=bot
+      - DB_PASSWORD=bot
+    depends_on:
+      - redis
+      - db
+
+  bot:
+    build: ./studiobot
+    image: studiobot:1.0.0
+    volumes:
+      - ./studiobot:/usr/src/studiobot
+      - ./receipts:/usr/src/receipts
+      # - receipts_data:/usr/src/receipts
+    command: python -m main.py
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+    #   - ADMIN_IDS=${ADMIN_IDS}
+      - BOT_TOKEN=7683870154:AAFVtIjPdNf_HQEnAuxgZJEdUd4Hy_WPzok
+      - DB_HOST=db
+      - DB_PORT=5432
+      - DB_NAME=bot
+      - DB_USER=bot
+      - DB_PASSWORD=bot
+    restart: unless-stopped
+    depends_on:
+      - redis
+      - db
+      - celery_worker
+
+volumes:
+  redis_data:
+  postgres_data:
+  # receipts_data:

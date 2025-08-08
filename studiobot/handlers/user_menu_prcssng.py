@@ -4,9 +4,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from aiogram.types import InputMediaPhoto
 
-from common.texts_for_db import text_for_order
+from common.constants import text_for_order
 from database.orm_query import orm_add_to_cart, orm_delete_from_cart, orm_get_banner, orm_get_categories, orm_get_category, orm_get_product, orm_get_products, orm_get_user_carts, orm_get_user_orders, orm_reduce_product_in_cart
 from keybds.inline import get_order_btns, get_orders_btns, get_product_btns, get_products_list_btns, get_user_cart_btns, get_user_catalog_btns, get_user_main_btns
+from services.storage import Storage
 from utils.paginator import Paginator
 from utils.service import cart_caption, get_caption
 
@@ -206,6 +207,8 @@ async def order(session, level, menu_name, user_id, page):
                     for idx, cart in enumerate(cart_list, start=1)
                     )
         total_price = round(sum(cart.quantity * cart.product.final_price for cart in carts), 2)
+
+        Storage.save_state(user_id, {'order_amount': float(total_price)})
 
         caption = f"{txt_carts_lst}\n\n<b>К оплате {total_price}{text_for_order}</b>\n\
                             Страница {paginator.page} из {paginator.pages}"

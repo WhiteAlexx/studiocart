@@ -229,3 +229,8 @@ async def orm_get_user_orders(session: AsyncSession, user_id):
         grouped_orders.append(list(group))
 
     return grouped_orders
+
+
+async def orm_delete_orders(session: AsyncSession, user_id, cost):
+    await session.execute(delete(Order).where(Order.user_id == user_id, Order.cost == cost))
+    await session.commit()

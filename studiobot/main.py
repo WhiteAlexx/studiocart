@@ -12,10 +12,10 @@ from handlers.user_group import user_group_router
 from middlewares.db import DataBaseSession
 
 
-bot = Bot(token=environ.get('TOKEN'),
+bot = Bot(token='7683870154:AAFVtIjPdNf_HQEnAuxgZJEdUd4Hy_WPzok',
           default=DefaultBotProperties(parse_mode=ParseMode.HTML)
           )
-bot.my_admins_list = []
+bot.my_admins_list = [844168645]
 
 dp = Dispatcher()
 

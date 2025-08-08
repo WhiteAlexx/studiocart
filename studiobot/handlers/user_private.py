@@ -6,11 +6,14 @@ from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
-from common.texts_for_db import order_alert
+from common.constants import order_alert
 from database.orm_query import orm_add_to_cart, orm_add_user, orm_change_cart, orm_create_orders, orm_get_product
 from filters.chat_types import ChatTypeFilter
 from handlers.user_menu_prcssng import get_menu_content, product_menu
 from keybds.inline import MenuCallback, get_callback_btns
+from services.storage import Storage
+from tasks.celery_tasks import process_receipt
+from utils.file_utils import download_file
 from utils.service import parse_count
 
 
@@ -56,7 +59,9 @@ async def add_to_cart(callback: types.CallbackQuery, callback_data: MenuCallback
     product = await orm_get_product(session, product_id=callback_data.product_id)
     if product.unit == 'шт':
         try:
-            await orm_add_to_cart(session, user_id=user_id, product_id=callback_data.product_id, quantity=1)
+            await orm_add_to_cart(
+                session, user_id=user_id, product_id=callback_data.product_id, quantity=1
+            )
             await callback.answer('Товар добавлен в корзину')
         except ValueError:
             await callback.answer('❗Нельзя заказать больше наличия❗', show_alert=True)
@@ -65,7 +70,9 @@ async def add_to_cart(callback: types.CallbackQuery, callback_data: MenuCallback
             await callback.answer('❗Товар кончился❗', show_alert=True)
         elif product.quantity <= 1.2:
             try:
-                await orm_add_to_cart(session, user_id=user_id, product_id=callback_data.product_id, quantity=product.quantity)
+                await orm_add_to_cart(
+                    session, user_id=user_id, product_id=callback_data.product_id, quantity=product.quantity
+                )
                 await callback.answer('Товар добавлен в корзину')
             except ValueError:
                 await callback.answer('❗Нельзя заказать больше наличия❗', show_alert=True)
@@ -131,7 +138,9 @@ async def get_add_count(message: types.Message, state: FSMContext, session: Asyn
                 user_id=message.from_user.id
             )
 
-            await bot.edit_message_media(media=media, chat_id=Quant.chat_id, message_id=Quant.message_id, reply_markup=reply_markup)
+            await bot.edit_message_media(
+                media=media, chat_id=Quant.chat_id, message_id=Quant.message_id, reply_markup=reply_markup
+            )
     else:
         mssg = await message.answer(result)
         Quant.messages_ids.append(mssg.message_id)
@@ -189,7 +198,9 @@ async def get_cng_count(message: types.Message, state: FSMContext, session: Asyn
                 user_id=message.from_user.id
             )
 
-            await bot.edit_message_media(media=media, chat_id=Quant.chat_id, message_id=Quant.message_id, reply_markup=reply_markup)
+            await bot.edit_message_media(
+                media=media, chat_id=Quant.chat_id, message_id=Quant.message_id, reply_markup=reply_markup
+            )
 
         except ValueError:
             mssg = await message.answer(text='<b>❗Нельзя заказать больше наличия❗</b>')
@@ -228,32 +239,66 @@ async def payment(callback: types.CallbackQuery, callback_data: MenuCallback, st
     await callback.answer('❗Отправьте скриншот чека или pdf-файл❗', show_alert=True)
     await state.set_state(Payment.pay_mess)
 
+
 @user_private_router.message(Payment.pay_mess, (F.document) | (F.photo))
 async def send_pay_mess(message: types.Message, state: FSMContext, session: AsyncSession, bot: Bot):
 
-    crr_state = await state.get_state()
-    print(crr_state)
+    if message.document:
+        file_id = message.document.file_id
+        file_name = message.document.file_name
+    elif message.photo:
+        file_id = message.photo[-1].file_id
+        file_name = f"{message.photo[-1].file_unique_id}.jpg"
+    else:
+        mssg = await message.answer('❗Отправьте скриншот чека или pdf-файл❗')
+        await asyncio.sleep(2)
+        await message.delete()
+        await asyncio.sleep(2)
+        await bot.delete_message(chat_id=message.chat.id, message_id=mssg.message_id)
+        return
 
-    await orm_create_orders(session, user_id=message.from_user.id)
+    file_path = await download_file(bot, file_id, file_name, message.from_user.id)
 
-    data = Quant.callback_data
-    
-    print(data)
+    user_state = Storage.get_state(message.from_user.id)
+
+    mssg = await message.answer('🔍 Начинаем проверку чека...\n\n⏳ Ожидайте уведомление, когда проверка будет завершена')
+
+    process_receipt.delay(
+        file_path=file_path,
+        expected_amount=user_state.get('order_amount'),
+        user_id=message.from_user.id,
+        chat_id=message.chat.id,
+        file_id=file_id,
+    )
+
+    Storage.save_state(message.from_user.id, {
+        **user_state,
+        'processing': True,
+        'processing_file': file_path,
+    })
 
     media, reply_markup = await get_menu_content(
         session,
-        level=5,
-        menu_name=data.menu_name,
-        parent_id=data.parent_id,
-        category=data.category,
-        page=data.page,
-        product_id=data.product_id,
-        user_id=message.from_user.id
+        level=0,
+        menu_name='main',
     )
 
-    await bot.edit_message_media(media=media, chat_id=Quant.chat_id, message_id=Quant.message_id, reply_markup=reply_markup)
+    await bot.edit_message_media(
+        media=media, chat_id=Payment.chat_id, message_id=Payment.message_id, reply_markup=reply_markup
+    )
 
-    await message.forward(chat_id=-1002146117897)
+    await asyncio.sleep(2)
+    await bot.delete_message(chat_id=message.chat.id, message_id=mssg.message_id)
+
+    if message.document:
+        await bot.send_document(
+            document=message.document.file_id, caption='Новый заказ', chat_id=-1002146117897
+        )
+    if message.photo:
+        await bot.send_photo(
+            photo=message.photo[-1].file_id, caption='Новый заказ', chat_id=-1002146117897
+        )
+
     await message.delete()
     await state.clear()
 
@@ -299,3 +344,4 @@ async def user_menu(callback: types.CallbackQuery, callback_data: MenuCallback, 
     else:
         await callback.message.edit_media(media=media, reply_markup=reply_markup)
         await callback.answer()
+        await callback.message.edi

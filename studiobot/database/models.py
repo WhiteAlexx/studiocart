@@ -80,7 +80,7 @@ class Product(Base):
         '''
 
         value = Decimal(self.discount[:-1]).quantize(Decimal(0.00), ROUND_HALF_UP)
-        
+
         if self.discount.endswith('%'):
             return value
         else:  # заканчивается на 'р'

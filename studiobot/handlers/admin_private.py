@@ -6,9 +6,11 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
 from database.models import Product
-from database.orm_query import orm_change_banner_image, orm_get_info_pages, orm_neo_banner
+from database.orm_query import orm_change_banner_image, orm_create_orders, orm_delete_orders, orm_get_info_pages, orm_neo_banner
 from filters.chat_types import ChatTypeFilter, IsAdmin
 from keybds.reply import get_keyboard
+from services.bot_notifier import OrderCallback, notify_user
+from services.storage import Storage
 
 
 admin_router = Router()
@@ -143,3 +145,39 @@ async def uncorrect_banner_description(message: types.Message):
     mssg = await message.answer('Отправьте описание баннера')
     NeoBanner.messages_ids.append(mssg.message_id)
     await message.delete()
+
+
+@admin_router.callback_query(OrderCallback.filter())
+async def handle_admin_decision(callback: types.CallbackQuery, callback_data: OrderCallback, session: AsyncSession):
+    '''Обработчик решения администратора'''
+    user_state = Storage.get_state(callback_data.user_id)
+    expected_amount = user_state.get('order_amount')
+
+    if callback_data.verify == 'accept':
+        try:
+            await orm_create_orders(session, callback_data.user_id)
+            await notify_user(
+                callback_data.chat_id,
+                f"✅ Администратор подтвердил платёж\n\nВаш заказ на сумму {expected_amount:2f}₽ принят."
+            )
+        except Exception as e:
+            await callback.answer(str(e), show_alert=True)
+
+    elif callback_data.verify == 'reject':
+        await notify_user(
+            callback_data.chat_id,
+            '❌ Администратор отклонил чек.\n\nПожалуйста, проверьте правильность чека и отправьте его снова.'
+        )
+
+    elif callback_data.verify == 'delete':
+        try:
+            await orm_delete_orders(session, callback_data.user_id, expected_amount)
+            await notify_user(
+                callback_data.chat_id,
+                '❌ Администратор удалил заказ.\n\nПожалуйста, не мухлюйте с чеками!'
+            )
+        except Exception as e:
+            await callback.answer(str(e), show_alert=True)
+
+    await callback.answer()
+    await callback.message.edit_reply_markup(reply_markup=None)
