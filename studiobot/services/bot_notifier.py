@@ -26,9 +26,6 @@ async def notify_user(chat_id: int, message: str):
     try:
         mssg = await bot.send_message(chat_id, message)
 
-        await asyncio.sleep(2)
-        await bot.delete_message(chat_id=chat_id, message_id=mssg.message_id)
-
     except Exception as e:
         logger.error(f"Ошибка отправки уведомления пользователю {chat_id}: {str(e)}")
 

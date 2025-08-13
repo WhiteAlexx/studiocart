@@ -8,8 +8,11 @@ RUN apt-get update && apt-get install -y \
     tesseract-ocr-rus \
     poppler-utils \
     libgl1 \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    tzdata
 
+ENV TZ=Asia/Irkutsk
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 
 ENV PYTHONDONTWRITEBYTECODE=1
 
@@ -22,5 +25,3 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
-
-#CMD ["python", "app.py"]

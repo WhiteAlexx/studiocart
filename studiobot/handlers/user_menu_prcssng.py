@@ -1,21 +1,45 @@
-import decimal
-from email.mime import image
+import asyncio
+import hashlib
+import os
+import pickle
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from aiogram import Bot
 from aiogram.types import InputMediaPhoto
 
 from common.constants import text_for_order
-from database.orm_query import orm_add_to_cart, orm_delete_from_cart, orm_get_banner, orm_get_categories, orm_get_category, orm_get_product, orm_get_products, orm_get_user_carts, orm_get_user_orders, orm_reduce_product_in_cart
+from config import config
+from database.orm_query import (
+                                orm_add_to_cart,
+                                orm_delete_from_cart,
+                                orm_get_banner,
+                                orm_get_categories,
+                                orm_get_category,
+                                orm_get_product,
+                                orm_get_products,
+                                orm_get_user_carts,
+                                orm_get_user_orders,
+                                orm_reduce_product_in_cart
+                                )
+from database.redis_cli import banner_cache, redis_client
 from keybds.inline import get_order_btns, get_orders_btns, get_product_btns, get_products_list_btns, get_user_cart_btns, get_user_catalog_btns, get_user_main_btns
 from services.storage import Storage
+# from tasks.celery_tasks import create_collage
+from utils.file_utils import create_collage, download_file
 from utils.paginator import Paginator
 from utils.service import cart_caption, get_caption
 
 
+bot = Bot(token='7683870154:AAFVtIjPdNf_HQEnAuxgZJEdUd4Hy_WPzok')
+
+
 async def main_menu(session, level, menu_name):
 
-    banner = await orm_get_banner(session, menu_name)
-    image = InputMediaPhoto(media=banner.image, caption=banner.description)
+    cache_key = f"banner:{menu_name}"
+
+    image_id, description = await banner_cache(cache_key, lambda: orm_get_banner(session, menu_name), 900)
+
+    image = InputMediaPhoto(media=image_id, caption=description)
 
     kbds = get_user_main_btns(level=level)
 
@@ -24,14 +48,24 @@ async def main_menu(session, level, menu_name):
 
 async def catalog_menu(session, level, menu_name, parent_id):
 
-    if menu_name == 'catalog':
-        banner = await orm_get_banner(session, menu_name)
-        image = InputMediaPhoto(media=banner.image, caption=banner.description)
-    else:
-        category = await orm_get_category(session, parent_id)
-        image = InputMediaPhoto(media=category.banner, caption=category.name)
+    cache_key = f"banner:{menu_name}"
 
-    categories = await orm_get_categories(session, parent_id)
+    if menu_name == 'catalog':
+        image_id, description = await banner_cache(cache_key, lambda: orm_get_banner(session, menu_name), 900)
+
+    else:
+        image_id, description = await banner_cache(cache_key, lambda: orm_get_category(session, parent_id), 900)
+
+    image = InputMediaPhoto(media=image_id, caption=description)
+
+    cache_key_cats = f"cats:{parent_id}"
+
+    if cached_data := redis_client.get(cache_key_cats):
+        categories = pickle.loads(cached_data)
+
+    else:
+        categories = await orm_get_categories(session, parent_id)
+        redis_client.set(cache_key_cats, pickle.dumps(categories), ex=300)
 
     kbds = get_user_catalog_btns(level=level, categories=categories)
 
@@ -61,32 +95,74 @@ def pages(paginator: Paginator):
 
 async def products_list_menu(session, level, category, page):
 
-    products = await orm_get_products(session, category_id=category)
-    paginator = Paginator(products, page=page, per_page=10)
-    product_list = paginator.get_page()
+    try:
+        cache_key_prods = f"prods:{category}"
 
-    txt_prdcts_lst = '\n'.join(
-                f"{idx}. {product.name} {product.quantity}{product.unit}"
-                for idx, product in enumerate(product_list, start=1)
-                )
-    caption = f"{txt_prdcts_lst}\n\n\nНажмите соответствующую кнопку, чтобы посмотреть товар👇\n\n\
-                        Страница {paginator.page} из {paginator.pages}"
+        if cached_data := redis_client.get(cache_key_prods):
+            products = pickle.loads(cached_data)
 
-    products_btns = product_count(product_list)
-    paginations_btns = pages(paginator)
+        else:
+            products = await orm_get_products(session, category_id=category)
+            redis_client.set(cache_key_prods, pickle.dumps(products), ex=60)
 
-    img_lst = [product.image[0] for product in product_list]
-    image = (img_lst, caption)
+        paginator = Paginator(products, page=page, per_page=9)     # до 9 для коллажа
+        product_list = paginator.get_page()
 
-    kbds = get_products_list_btns(
-        level=level,
-        category=category,
-        page=page,
-        products_btns=products_btns,
-        paginations_btns=paginations_btns,
-    )
+        txt_prdcts_lst = '\n'.join(
+                    f"{idx}. {product.name}"# {product.quantity}{product.unit}"
+                    for idx, product in enumerate(product_list, start=1)
+                    )
+        caption = f"{txt_prdcts_lst}\n\n\nНажмите соответствующую кнопку, чтобы посмотреть товар👇\n\n\
+                            Страница {paginator.page} из {paginator.pages}"
 
-    return image, kbds
+        products_btns = product_count(product_list)
+        paginations_btns = pages(paginator)
+
+        img_lst = [product.image[0] for product in product_list]    # для коллажа | здесь же проверять длину списка, если 1: коллаж незачем
+        image = None
+
+        if len(img_lst) == 1:
+            image = InputMediaPhoto(media=img_lst[0], caption=caption)
+
+        else:
+            collage_key = hashlib.md5(''.join(img_lst).encode()).hexdigest()
+
+            if cached_file_id := redis_client.get(collage_key):
+                image = InputMediaPhoto(media=cached_file_id.decode(), caption=caption)
+
+            else:
+
+                os.makedirs(config.COLLAGE_DIR, exist_ok=True)
+
+                # Создаем задачи для параллельного выполнения
+                tasks = [
+                    download_file(bot=bot, file_id=file_id, dest='collage')
+                    for file_id in img_lst
+                ]
+                
+                # Параллельное выполнение всех задач
+                image_paths = await asyncio.gather(*tasks)
+
+                collage_path = os.path.join(config.COLLAGE_DIR, f"{collage_key}.jpg")
+                collage = await create_collage(bot=bot, image_paths=image_paths, collage_path=collage_path, collage_key=collage_key)
+
+                image = InputMediaPhoto(media=collage, caption=caption)
+
+        kbds = get_products_list_btns(
+            level=level,
+            category=category,
+            page=page,
+            products_btns=products_btns,
+            paginations_btns=paginations_btns,
+        )
+
+        return image, kbds
+
+    except KeyError:
+        pass
+
+    except Exception as e:
+        await bot.send_message(config.ADMIN_ID[0], str(e))
 
 
 async def product_menu(session, level, product_id, category, page):
@@ -145,8 +221,10 @@ async def carts(session, level, menu_name, page, user_id, product_id):
     carts = await orm_get_user_carts(session, user_id)
 
     if not carts:
-        banner = await orm_get_banner(session, 'cart')
-        image = InputMediaPhoto(media=banner.image, caption=f"<b>{banner.description}</b>")
+        cache_key = 'banner:empty_carts'
+        image_id, description = await banner_cache(cache_key, lambda: orm_get_banner(session, menu_name), 24*3600)
+
+        image = InputMediaPhoto(media=image_id, caption=f"<b>{description}</b>")
 
         kbds = get_user_cart_btns(
             level=level,
@@ -188,8 +266,10 @@ async def order(session, level, menu_name, user_id, page):
             await orm_delete_from_cart(session, user_id, cart.product_id)
 
     if not carts:
-        banner = await orm_get_banner(session, 'cart')
-        image = InputMediaPhoto(media=banner.image, caption=f"<b>{banner.description}</b>")
+        cache_key = 'banner:empty_carts'
+        image_id, description = await banner_cache(cache_key, lambda: orm_get_banner(session, menu_name), 24*3600)
+
+        image = InputMediaPhoto(media=image_id, caption=f"<b>{description}</b>")
 
         kbds = get_order_btns(
             level=level,
@@ -215,8 +295,10 @@ async def order(session, level, menu_name, user_id, page):
 
         paginations_btns = pages(paginator)
 
-        banner = await orm_get_banner(session, menu_name)
-        image = InputMediaPhoto(media=banner.image, caption=caption)
+        cache_key = f"banner:{menu_name}"
+        image_id, description = await banner_cache(cache_key, lambda: orm_get_banner(session, menu_name), 24*3600)
+
+        image = InputMediaPhoto(media=image_id, caption=caption)
 
         kbds = get_order_btns(
             level=level,
@@ -230,10 +312,12 @@ async def order(session, level, menu_name, user_id, page):
 async def orders(session, level, menu_name, user_id, page):
 
     grouped_orders = await orm_get_user_orders(session, user_id)
-    banner = await orm_get_banner(session, 'order')
+
+    cache_key = 'banner:order'
+    image_id, description = await banner_cache(cache_key, lambda: orm_get_banner(session, 'order'), 24*3600)
 
     if not grouped_orders:
-        image = InputMediaPhoto(media=banner.image, caption=f"<b>{banner.description}</b>")
+        image = InputMediaPhoto(media=image_id, caption=f"<b>{description}</b>")
 
         kbds = get_orders_btns(
             level=level,
@@ -257,7 +341,7 @@ async def orders(session, level, menu_name, user_id, page):
         caption = f"<b><u>Заказ на сумму {cost}₽</u>\n<i>от {date}</i>:</b>\n\n{txt_orders_lst}\n\n\n"
 
         image = InputMediaPhoto(
-            media = banner.image,
+            media = image_id,
             caption=caption + f"            Заказ {paginator.page} из {paginator.pages}"
         )
 

@@ -119,6 +119,7 @@ def get_products_list_btns(
     row_pgntns = []
     for text, menu_name in paginations_btns.items():
         if menu_name == 'next':
+            menu_name = 'products_list'
             row_pgntns.append(InlineKeyboardButton(text=text,
                         callback_data=MenuCallback(
                             level=level,
@@ -127,6 +128,7 @@ def get_products_list_btns(
                             page=page + 1).pack())
             )
         elif menu_name == 'previous':
+            menu_name = 'products_list'
             row_pgntns.append(InlineKeyboardButton(text=text,
                         callback_data=MenuCallback(
                             level=level,

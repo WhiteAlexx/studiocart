@@ -1,10 +1,7 @@
 import json
-import redis
 
-from config import config
+from database.redis_cli import redis_client
 
-
-redis_client = redis.Redis.from_url(config.REDIS_URL)
 
 class Storage:
 

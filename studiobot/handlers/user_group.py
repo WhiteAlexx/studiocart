@@ -31,6 +31,7 @@ async def get_admins(message: types.Message, bot: Bot):
     print(admins_list)
 
 
+
 # @user_group_router.message(F.photo)
 # async def add__1(message: types.Message):
 #     image_id = message.photo[-1].file_id
@@ -38,23 +39,21 @@ async def get_admins(message: types.Message, bot: Bot):
 #     await message.answer(image_id)
 
 
+# restricted_words = {'буй', 'гадина'}
 
-restricted_words = {'буй', 'гадина'}
-
-
-def clean_text(text: str):
-    return text.translate(str.maketrans('', '', punctuation))
+# def clean_text(text: str):
+#     return text.translate(str.maketrans('', '', punctuation))
 
 
-@user_group_router.edited_message()
-@user_group_router.message()
-async def cleaner(message: types.Message):
-    #Отправляем статус 'печатает'
-    await asyncio.sleep(1)
-    await message.bot.send_chat_action(chat_id=message.chat.id, action=ChatAction.TYPING)
-    await asyncio.sleep(6)
-    if restricted_words.intersection(clean_text(message.text.lower()).split()):
-        await message.answer(f"❗️{message.from_user.first_name}, ругаться запрещено❗️")
-        await message.delete()
-        # await message.chat.ban(message.from_user.id)
+# @user_group_router.edited_message()
+# @user_group_router.message()
+# async def cleaner(message: types.Message):
+#     #Отправляем статус 'печатает'
+#     await asyncio.sleep(1)
+#     await message.bot.send_chat_action(chat_id=message.chat.id, action=ChatAction.TYPING)
+#     await asyncio.sleep(6)
+#     if restricted_words.intersection(clean_text(message.text.lower()).split()):
+#         await message.answer(f"❗️{message.from_user.first_name}, ругаться запрещено❗️")
+#         await message.delete()
+#         # await message.chat.ban(message.from_user.id)
 

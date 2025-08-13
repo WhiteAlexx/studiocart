@@ -257,7 +257,7 @@ async def send_pay_mess(message: types.Message, state: FSMContext, session: Asyn
         await bot.delete_message(chat_id=message.chat.id, message_id=mssg.message_id)
         return
 
-    file_path = await download_file(bot, file_id, file_name, message.from_user.id)
+    file_path = await download_file(bot, file_id, dest='receipts', file_name=file_name, user_id=message.from_user.id)
 
     user_state = Storage.get_state(message.from_user.id)
 
@@ -316,32 +316,30 @@ async def unsend_pay_mess(message: types.Message, state: FSMContext, bot: Bot):
 @user_private_router.callback_query(MenuCallback.filter())
 async def user_menu(callback: types.CallbackQuery, callback_data: MenuCallback, session: AsyncSession):
 
-    if callback_data.menu_name == 'value_error':
-        await callback.answer('❗Нельзя заказать больше наличия❗', show_alert=True)
+    try:
+        if callback_data.menu_name == 'value_error':
+            await callback.answer('❗Нельзя заказать больше наличия❗', show_alert=True)
 
-    if callback_data.menu_name == 'order':
-        await callback.answer(order_alert, show_alert=True)
+        if callback_data.menu_name == 'order':
+            await callback.answer(order_alert, show_alert=True)
 
-    media, reply_markup = await get_menu_content(
-        session,
-        level=callback_data.level,
-        menu_name=callback_data.menu_name,
-        parent_id=callback_data.parent_id,
-        category=callback_data.category,
-        page=callback_data.page,
-        product_id=callback_data.product_id,
-        user_id=callback.from_user.id
-    )
+        media, reply_markup = await get_menu_content(
+            session,
+            level=callback_data.level,
+            menu_name=callback_data.menu_name,
+            parent_id=callback_data.parent_id,
+            category=callback_data.category,
+            page=callback_data.page,
+            product_id=callback_data.product_id,
+            user_id=callback.from_user.id
+        )
 
-    if isinstance(media, tuple):
-        img_lst, caption = media
-
-        for img in img_lst:
-            await callback.message.edit_media(media=types.InputMediaPhoto(media=img, caption=caption), reply_markup=reply_markup)
-            await callback.answer('Ожидайте...⏳')
-            await asyncio.sleep(0.1)
-
-    else:
         await callback.message.edit_media(media=media, reply_markup=reply_markup)
+
+        if callback_data.menu_name == 'products_list':
+            await callback.answer('⏳ Создаём коллаж...')#, show_alert=True)
+
         await callback.answer()
-        await callback.message.edi
+
+    except TypeError:
+        await callback.answer('В этой категории ещё нет товаров. Подождите, когда они появятся.', show_alert=True)

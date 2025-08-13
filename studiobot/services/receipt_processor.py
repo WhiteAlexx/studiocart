@@ -22,7 +22,6 @@ def preprocess_image(img_path: str):
     img = enhancer.enhance(1.5)
     processed_path = f"{img_path}_processed.jpg"
     img.save(processed_path)
-    print(processed_path)
 
     return processed_path
 
@@ -88,7 +87,6 @@ def validate_receipt(text: str, expected_amount: float):
     ]
 
     for line in lines:
-        print('СТРОКА: ' + line)
 
         for pattern in recipient_patterns:
 

@@ -1,10 +1,12 @@
 import decimal
 from itertools import groupby
+import pickle
 from sqlalchemy import select, update, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload, selectinload
 
 from database.models import Banner, Cart, Category, Order, Product, User
+from database.redis_cli import redis_client
 
 
 ############### Работа с баннерами (информационными страницами) ###############
@@ -193,6 +195,22 @@ async def orm_get_user_carts(session: AsyncSession, user_id):
     result = await session.execute(query)
     return result.scalars().all()
 
+
+async def orm_delete_all_carts(session: AsyncSession):
+    query = select(Cart)#.options(selectinload(Cart.product)).options(selectinload(Cart.user))
+    result = await session.execute(query)
+    carts = result.scalars().all()
+
+    users_ids = set()
+
+    for cart in carts:
+        users_ids.add(cart.user_id)
+        await orm_increment_product_quant(session, product_id=cart.product_id, quantity=cart.quantity)
+        await session.delete(cart)
+
+    await session.commit()
+    return users_ids
+
 ###################################################################################################
 
 async def orm_create_orders(session: AsyncSession, user_id):
@@ -212,21 +230,28 @@ async def orm_create_orders(session: AsyncSession, user_id):
         for cart in carts
     ]
 
-    print(orders)
-
     session.add_all(orders)
     await session.execute(delete(Cart).where(Cart.user_id == user_id))
     await session.commit()
 
 
 async def orm_get_user_orders(session: AsyncSession, user_id):
-    query = select(Order).where(Order.user_id == user_id).order_by(Order.created.desc(), Order.cost)
-    result = await session.execute(query)
-    orders = result.scalars().all()
 
-    grouped_orders = []
-    for key, group in groupby(orders, key=lambda o: (o.created, o.cost)):
-        grouped_orders.append(list(group))
+    cache_key = f"orders:{user_id}"
+
+    if cached_data := redis_client.get(cache_key):
+        grouped_orders = pickle.loads(cached_data)
+
+    else:
+        query = select(Order).where(Order.user_id == user_id).order_by(Order.created.desc(), Order.cost)
+        result = await session.execute(query)
+        orders = result.scalars().all()
+
+        grouped_orders = []
+        for key, group in groupby(orders, key=lambda o: (o.created, o.cost)):
+            grouped_orders.append(list(group))
+
+        redis_client.set(cache_key, pickle.dumps(grouped_orders), ex=300)
 
     return grouped_orders
 

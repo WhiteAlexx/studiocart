@@ -28,7 +28,7 @@ SERVICE_KB = get_keyboard(
 @admin_router.message(F.chat_shared)
 async def get_chat(message: types.Message, bot: Bot):
     '''Позволяет выбрать чат и получить его id.'''
-    print(message.chat_shared.chat_id)
+
     await bot.send_message(chat_id=844168645, text=str(message.chat_shared.chat_id))
 
 @admin_router.message(Command('сервис'))
@@ -91,8 +91,7 @@ async def neo_banner_0(message: types.Message, state: FSMContext, session: Async
                                         reply_markup=types.ReplyKeyboardRemove()
                                         )
     NeoBanner.messages_ids.append(mssg.message_id)
-    print(NeoBanner.messages_ids)
-    print(type(NeoBanner.messages_ids[0]))
+
     await state.set_state(NeoBanner.image)
 
 @admin_router.message(NeoBanner.image, F.photo)

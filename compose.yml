@@ -3,6 +3,8 @@ services:
     image: redis:7-alpine
     ports:
       - "6379:6379"
+    environment:
+      - TZ=Asia/Irkutsk
     volumes:
       - redis_data:/data
 
@@ -12,6 +14,7 @@ services:
       - POSTGRES_DB=bot
       - POSTGRES_USER=bot
       - POSTGRES_PASSWORD=bot
+      - TZ=Asia/Irkutsk
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
@@ -28,18 +31,23 @@ services:
     volumes:
       - ./studiobot:/usr/src/studiobot
       - ./receipts:/usr/src/receipts
-      # - receipts_data:/usr/src/receipts
+      - ./collage:/usr/src/collage
     command: celery -A tasks.celery_tasks worker --loglevel=info --pool=solo
     environment:
-      - REDIS_URL=redis://redis:6379/0
       - CELERY_BROKER=redis://redis:6379/1
-    #   - ADMIN_IDS=${ADMIN_IDS}
-      - BOT_TOKEN=7683870154:AAFVtIjPdNf_HQEnAuxgZJEdUd4Hy_WPzok
-      - DB_HOST=db
-      - DB_PORT=5432
-      - DB_NAME=bot
-      - DB_USER=bot
-      - DB_PASSWORD=bot
+      - TZ=Asia/Irkutsk
+    depends_on:
+      - redis
+      - db
+
+  celery_beat:
+    build: ./studiobot
+    volumes:
+      - ./studiobot:/usr/src/studiobot
+    command: celery -A tasks.celery_tasks beat --loglevel=info
+    environment:
+      - CELERY_BROKER=redis://redis:6379/1
+      - TZ=Asia/Irkutsk
     depends_on:
       - redis
       - db
@@ -50,17 +58,17 @@ services:
     volumes:
       - ./studiobot:/usr/src/studiobot
       - ./receipts:/usr/src/receipts
-      # - receipts_data:/usr/src/receipts
+      - ./collage:/usr/src/collage
     command: python -m main.py
     environment:
       - REDIS_URL=redis://redis:6379/0
-    #   - ADMIN_IDS=${ADMIN_IDS}
       - BOT_TOKEN=7683870154:AAFVtIjPdNf_HQEnAuxgZJEdUd4Hy_WPzok
       - DB_HOST=db
       - DB_PORT=5432
       - DB_NAME=bot
       - DB_USER=bot
       - DB_PASSWORD=bot
+      - TZ=Asia/Irkutsk
     restart: unless-stopped
     depends_on:
       - redis
@@ -70,4 +78,3 @@ services:
 volumes:
   redis_data:
   postgres_data:
-  # receipts_data:
